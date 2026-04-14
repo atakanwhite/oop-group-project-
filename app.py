@@ -379,9 +379,9 @@ def main():
         choice = input("  Select option: ").strip()
 
         if choice == "0":
-            print("  Goodbye!")
+            print(" Goodbye!")
             break
-        elif choice in menu:
+        if choice in menu:
             _, action = menu[choice]
             if action is not None:
                 action()
