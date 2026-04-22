@@ -1,5 +1,4 @@
-"""snekPM – a Textual TUI for the snek project manager."""
-
+# app.py - correct import order
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
@@ -22,10 +21,10 @@ from textual.widgets import (
 import db
 from models import Priority, Project, Task
 
-
 # ---------------------------------------------------------------------------
 # Helper: seed default priorities if the table is empty
 # ---------------------------------------------------------------------------
+
 
 def _ensure_priorities() -> None:
     if not Priority.all():
@@ -36,6 +35,7 @@ def _ensure_priorities() -> None:
 # ---------------------------------------------------------------------------
 # Modal: create / edit a project
 # ---------------------------------------------------------------------------
+
 
 class ProjectFormScreen(ModalScreen[Project | None]):
     """Simple form to create a new project."""
@@ -85,6 +85,7 @@ class ProjectFormScreen(ModalScreen[Project | None]):
 # Modal: add a task to a project
 # ---------------------------------------------------------------------------
 
+
 class TaskFormScreen(ModalScreen[Task | None]):
     """Form to create a new task inside the selected project."""
 
@@ -110,7 +111,9 @@ class TaskFormScreen(ModalScreen[Task | None]):
         self._priorities = priorities
 
     def compose(self) -> ComposeResult:
-        pri_hint = "  ".join(f"{p.priority_id}={p.priority_name}" for p in self._priorities)
+        pri_hint = "  ".join(
+            f"{p.priority_id}={p.priority_name}" for p in self._priorities
+        )
         with Container(id="dialog"):
             yield Label("New Task", id="title")
             yield Label("Task name")
@@ -136,7 +139,12 @@ class TaskFormScreen(ModalScreen[Task | None]):
             pri = int(self.query_one("#inp-pri", Input).value.strip() or "1")
         except ValueError:
             pri = 1
-        t = Task(project_id=self._project_id, priority_id=pri, task_name=name, task_description=desc)
+        t = Task(
+            project_id=self._project_id,
+            priority_id=pri,
+            task_name=name,
+            task_description=desc,
+        )
         t.save()
         self.dismiss(t)
 
@@ -144,6 +152,7 @@ class TaskFormScreen(ModalScreen[Task | None]):
 # ---------------------------------------------------------------------------
 # Main application
 # ---------------------------------------------------------------------------
+
 
 class SnekPMApp(App):
     """snekPM – terminal project manager."""
@@ -245,7 +254,9 @@ class SnekPMApp(App):
         lv.clear()
         for p in Project.all():
             tick = "✓" if p.is_complete else "○"
-            lv.append(ListItem(Label(f" {tick} {p.project_name}"), id=f"proj-{p.project_id}"))
+            lv.append(
+                ListItem(Label(f" {tick} {p.project_name}"), id=f"proj-{p.project_id}")
+            )
 
     def _refresh_tasks(self) -> None:
         table = self.query_one("#task-table", DataTable)
@@ -321,7 +332,9 @@ class SnekPMApp(App):
         task.is_complete = 0 if task.is_complete else 1
         task.save()
         self._refresh_tasks()
-        self._set_status(f"Task #{task_id} marked {'done' if task.is_complete else 'open'}.")
+        self._set_status(
+            f"Task #{task_id} marked {'done' if task.is_complete else 'open'}."
+        )
 
     def action_delete_selected(self) -> None:
         # Try task table first
@@ -345,12 +358,13 @@ class SnekPMApp(App):
                 self.query_one("#tasks-title", Static).update(" Select a project …")
                 self.query_one("#task-table", DataTable).clear()
                 self._refresh_projects()
-                self._set_status(f"Project deleted.")
+                self._set_status("Project deleted.")
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     app = SnekPMApp()
