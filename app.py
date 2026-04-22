@@ -170,7 +170,7 @@ class SnekPMApp(App):
 
     CSS = """
     Screen {
-        layout: horizontal;
+        layout: vertical;
     }
 
     #sidebar {
@@ -236,6 +236,7 @@ class SnekPMApp(App):
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
+        self._project_ids = []
         db.init_db()
         _ensure_priorities()
         self._setup_task_table()
@@ -252,11 +253,13 @@ class SnekPMApp(App):
     def _refresh_projects(self) -> None:
         lv = self.query_one("#project-list", ListView)
         lv.clear()
+
+        self._project_ids = []
+
         for p in Project.all():
             tick = "✓" if p.is_complete else "○"
-            lv.append(
-                ListItem(Label(f" {tick} {p.project_name}"), id=f"proj-{p.project_id}")
-            )
+            lv.append(ListItem(Label(f" {tick} {p.project_name}")))
+            self._project_ids.append(p.project_id)
 
     def _refresh_tasks(self) -> None:
         table = self.query_one("#task-table", DataTable)
@@ -284,16 +287,25 @@ class SnekPMApp(App):
     # ------------------------------------------------------------------
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        item_id: str = event.item.id or ""
-        if item_id.startswith("proj-"):
-            pid = int(item_id.removeprefix("proj-"))
-            self.selected_project_id = pid
-            p = Project.get(pid)
-            if p:
-                self.query_one("#tasks-title", Static).update(
-                    f" 📁 {p.project_name}  (id={pid})"
-                )
-            self._refresh_tasks()
+        index = event.list_view.index
+
+        if index is None or index < 0:
+            return
+
+        if index >= len(self._project_ids):
+            return
+
+        pid = self._project_ids[index]
+        if pid is None:
+            return
+
+        self.selected_project_id = pid
+        p = Project.get(pid)
+        if p:
+            self.query_one("#tasks-title", Static).update(
+                f" 📁 {p.project_name}  (id={pid})"
+            )
+        self._refresh_tasks()
 
     # ------------------------------------------------------------------
     # Actions
@@ -320,22 +332,32 @@ class SnekPMApp(App):
         priorities = Priority.all()
         self.push_screen(TaskFormScreen(self.selected_project_id, priorities), _done)
 
-    def action_toggle_done(self) -> None:
-        table = self.query_one("#task-table", DataTable)
-        if table.cursor_row < 0:
-            return
-        row = table.get_row_at(table.cursor_row)
-        task_id = int(row[0])
-        task = Task.get(task_id)
-        if task is None:
-            return
-        task.is_complete = 0 if task.is_complete else 1
-        task.save()
-        self._refresh_tasks()
-        self._set_status(
-            f"Task #{task_id} marked {'done' if task.is_complete else 'open'}."
-        )
+def action_toggle_done(self) -> None:
+    table = self.query_one("#task-table", DataTable)
 
+    # No project / no tasks loaded
+    if table.row_count == 0:
+        self._set_status("No task selected.")
+        return
+
+    # Guard against invalid cursor position
+    if table.cursor_row < 0 or table.cursor_row >= table.row_count:
+        self._set_status("No task selected.")
+        return
+
+    row = table.get_row_at(table.cursor_row)
+    task_id = int(row[0])
+    task = Task.get(task_id)
+    if task is None:
+        self._set_status("Task not found.")
+        return
+
+    task.is_complete = 0 if task.is_complete else 1
+    task.save()
+    self._refresh_tasks()
+    self._set_status(
+        f"Task #{task_id} marked {'done' if task.is_complete else 'open'}."
+    )
     def action_delete_selected(self) -> None:
         # Try task table first
         table = self.query_one("#task-table", DataTable)
