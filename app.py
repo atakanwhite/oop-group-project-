@@ -1,4 +1,5 @@
 # app.py - correct import order
+# toggling projects and tasks done is not working and there is no code for milestones 
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
@@ -163,7 +164,7 @@ class SnekPMApp(App):
     BINDINGS = [
         Binding("n", "new_project", "New project"),
         Binding("t", "new_task", "New task"),
-        Binding("space", "toggle_done", "Toggle done"),
+        Binding("x", "toggle_done", "Toggle done"),
         Binding("delete,d", "delete_selected", "Delete"),
         Binding("q", "quit", "Quit"),
     ]
@@ -306,7 +307,7 @@ class SnekPMApp(App):
                 f" 📁 {p.project_name}  (id={pid})"
             )
         self._refresh_tasks()
-
+        self.query_one("#task-table", DataTable).focus()
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
@@ -335,19 +336,18 @@ class SnekPMApp(App):
 def action_toggle_done(self) -> None:
     table = self.query_one("#task-table", DataTable)
 
-    # No project / no tasks loaded
     if table.row_count == 0:
-        self._set_status("No task selected.")
+        self._set_status("No tasks to toggle.")
         return
 
-    # Guard against invalid cursor position
     if table.cursor_row < 0 or table.cursor_row >= table.row_count:
-        self._set_status("No task selected.")
+        self._set_status("Select a task row first.")
         return
 
     row = table.get_row_at(table.cursor_row)
     task_id = int(row[0])
     task = Task.get(task_id)
+
     if task is None:
         self._set_status("Task not found.")
         return
