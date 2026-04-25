@@ -1,5 +1,5 @@
 # app.py - correct import order
-# toggling projects and tasks done is not working and there is no code for milestones 
+# toggling projects and tasks done is not working and there is no code for milestones
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
@@ -151,6 +151,67 @@ class TaskFormScreen(ModalScreen[Task | None]):
 
 
 # ---------------------------------------------------------------------------
+# Views
+# ---------------------------------------------------------------------------
+
+
+class ProjectView(ListView):
+    """ListView for context aware key bindings"""
+
+    BINDINGS = [
+        Binding("n", "new_project", "New Project"),
+        Binding("u", "update_project", "Update Project"),
+        Binding("d", "delete_project", "Delete Project"),
+        Binding("j", "cursor_down", "↓"),
+        Binding("k", "cursor_up", "↑"),
+    ]
+
+    def action_new_project(self) -> None:
+        self.app.action_new_project()
+
+    def action_delete_project(self) -> None:
+        self.app.action_delete_project()
+
+    def action_update_project(self) -> None:
+        self.app.action_update_project()
+
+
+class TaskView(DataTable):
+    """DataTable for context aware task bindings"""
+
+    BINDINGS = [
+        Binding("t", "new_task", "New Task"),
+        Binding("T", "new_subtask", "New Sub-Task"),
+        Binding("u", "update_task", "Update Task"),
+        Binding("U", "update_subtask", "Update Sub-Task"),
+        Binding("x", "toggle_done", "Toggle Done"),
+        Binding("d", "delete_task", "Delete Task"),
+        Binding("h", "cursor_left", "←"),
+        Binding("j", "cursor_down", "↓"),
+        Binding("k", "cursor_up", "↑"),
+        Binding("l", "cursor_right", "→"),
+    ]
+
+    def action_new_task(self) -> None:
+        self.app.action_new_task()
+
+    def action_new_subtask(self) -> None:
+        pass
+
+    def action_delete_task(self) -> None:
+        self.app.action_delete_selected()
+
+    def action_toggle_done(self) -> None:
+        self.app.action_toggle_done()
+
+    def action_update_task(self) -> None:
+        pass
+
+    def action_update_subtask(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Main application
 # ---------------------------------------------------------------------------
 
@@ -158,14 +219,14 @@ class TaskFormScreen(ModalScreen[Task | None]):
 class SnekPMApp(App):
     """snekPM – terminal project manager."""
 
+    ENABLE_COMMAND_PALETTE = False
+
     TITLE = "🐍 snekPM"
     SUB_TITLE = "Project Manager"
 
     BINDINGS = [
-        Binding("n", "new_project", "New project"),
-        Binding("t", "new_task", "New task"),
-        Binding("x", "toggle_done", "Toggle done"),
-        Binding("delete,d", "delete_selected", "Delete"),
+        Binding("H", "focus_previous", "← Panel"),
+        Binding("L", "focus_next", "Panel →"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -225,10 +286,10 @@ class SnekPMApp(App):
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield Static("  PROJECTS", id="sidebar-title")
-                yield ListView(id="project-list")
+                yield ProjectView(id="project-list")
             with Vertical(id="main"):
                 yield Static(" Select a project …", id="tasks-title")
-                yield DataTable(id="task-table", zebra_stripes=True)
+                yield TaskView(id="task-table", zebra_stripes=True)
         yield Static("", id="status-bar")
         yield Footer()
 
@@ -308,6 +369,7 @@ class SnekPMApp(App):
             )
         self._refresh_tasks()
         self.query_one("#task-table", DataTable).focus()
+
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
@@ -318,46 +380,47 @@ class SnekPMApp(App):
                 self._refresh_projects()
                 self._set_status(f"Project '{result.project_name}' created.")
 
-        self.push_screen(ProjectFormScreen(), _done)
+            self.push_screen(ProjectFormScreen(), _done)
 
     def action_new_task(self) -> None:
         if self.selected_project_id is None:
             self._set_status("Select a project first (click in the left panel).")
             return
 
-        def _done(result: Task | None) -> None:
-            if result:
-                self._refresh_tasks()
-                self._set_status(f"Task '{result.task_name}' added.")
+    def _done(self, result: Task | None) -> None:
+        if result:
+            self._refresh_tasks()
+            self._set_status(f"Task '{result.task_name}' added.")
 
         priorities = Priority.all()
         self.push_screen(TaskFormScreen(self.selected_project_id, priorities), _done)
 
-def action_toggle_done(self) -> None:
-    table = self.query_one("#task-table", DataTable)
+    def action_toggle_done(self) -> None:
+        table = self.query_one("#task-table", DataTable)
 
-    if table.row_count == 0:
-        self._set_status("No tasks to toggle.")
-        return
+        if table.row_count == 0:
+            self._set_status("No tasks to toggle.")
+            return
 
-    if table.cursor_row < 0 or table.cursor_row >= table.row_count:
-        self._set_status("Select a task row first.")
-        return
+        if table.cursor_row < 0 or table.cursor_row >= table.row_count:
+            self._set_status("Select a task row first.")
+            return
 
-    row = table.get_row_at(table.cursor_row)
-    task_id = int(row[0])
-    task = Task.get(task_id)
+        row = table.get_row_at(table.cursor_row)
+        task_id = int(row[0])
+        task = Task.get(task_id)
 
-    if task is None:
-        self._set_status("Task not found.")
-        return
+        if task is None:
+            self._set_status("Task not found.")
+            return
 
-    task.is_complete = 0 if task.is_complete else 1
-    task.save()
-    self._refresh_tasks()
-    self._set_status(
-        f"Task #{task_id} marked {'done' if task.is_complete else 'open'}."
-    )
+        task.is_complete = 0 if task.is_complete else 1
+        task.save()
+        self._refresh_tasks()
+        self._set_status(
+            f"Task #{task_id} marked {'done' if task.is_complete else 'open'}."
+        )
+
     def action_delete_selected(self) -> None:
         # Try task table first
         table = self.query_one("#task-table", DataTable)
