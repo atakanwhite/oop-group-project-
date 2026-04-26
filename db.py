@@ -274,12 +274,13 @@ def init_db() -> None:
         print(f"Failed to initialize Database: {e}")
 
 
-def create_record(query: Enum, data: tuple = ()) -> None:
+def create_record(query: Enum, data: tuple = ()) -> int | None:
     try:
         with sqlite3.connect(DATABASE_FILE) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.execute(query.value, data)
+            return cursor.lastrowid
     except sqlite3.Error as e:
         print(f"Failed to create record: {e}")
 

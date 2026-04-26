@@ -34,7 +34,7 @@ class Project:
 
     def save(self) -> None:
         if self.project_id is None:
-            create_record(
+            self.project_id = create_record(
                 ProjectQueries.INSERT_PROJECT,
                 (
                     self.project_name,
@@ -94,8 +94,8 @@ class Project:
             created_at=row[1],
             project_name=row[2],
             project_description=row[3] or "",
-            date_start=row[4],
-            date_end=row[5],
+            date_start=date.fromisoformat(row[4]) if row[4] else None,
+            date_end=date.fromisoformat(row[5]) if row[5] else None,
             is_complete=row[6],
         )
 
@@ -117,7 +117,9 @@ class Priority:
 
     def save(self) -> None:
         if self.priority_id is None:
-            create_record(PriorityQueries.INSERT_PRIORITY, (self.priority_name,))
+            self.priority_id = create_record(
+                PriorityQueries.INSERT_PRIORITY, (self.priority_name,)
+            )
         else:
             update_record(
                 PriorityQueries.UPDATE_PRIORITY,
@@ -162,7 +164,7 @@ class Milestone:
 
     def save(self) -> None:
         if self.milestone_id is None:
-            create_record(
+            self.milestone_id = create_record(
                 MilestoneQueries.INSERT_MILESTONE,
                 (
                     self.project_id,
@@ -208,7 +210,7 @@ class Milestone:
             project_id=row[1],
             created_at=row[2],
             milestone_name=row[3],
-            date=row[4],
+            date=date.fromisoformat(row[4]) if row[4] else None,
         )
 
     def __str__(self) -> str:
@@ -228,7 +230,7 @@ class Tag:
 
     def save(self) -> None:
         if self.tag_id is None:
-            create_record(TagQueries.INSERT_TAG, (self.tag_name,))
+            self.tag_id = create_record(TagQueries.INSERT_TAG, (self.tag_name,))
         else:
             update_record(TagQueries.UPDATE_TAG, (self.tag_name, self.tag_id))
 
@@ -276,7 +278,7 @@ class Task:
 
     def save(self) -> None:
         if self.task_id is None:
-            create_record(
+            self.task_id = create_record(
                 TaskQueries.INSERT_TASK,
                 (
                     self.project_id,
@@ -359,8 +361,8 @@ class Task:
             created_at=row[5],
             task_name=row[6],
             task_description=row[7] or "",
-            date_start=row[8],
-            date_end=row[9],
+            date_start=date.fromisoformat(row[8]) if row[8] else None,
+            date_end=date.fromisoformat(row[9]) if row[9] else None,
             is_complete=row[10],
         )
 
