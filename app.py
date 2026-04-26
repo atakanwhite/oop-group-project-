@@ -20,7 +20,7 @@ from textual.widgets import (
 )
 
 import db
-from models import Priority, Project, Task
+from models import Milestone, Priority, Project, Task
 
 # ---------------------------------------------------------------------------
 # Helper: seed default priorities if the table is empty
@@ -38,24 +38,8 @@ def _ensure_priorities() -> None:
 # ---------------------------------------------------------------------------
 
 
-class ProjectFormScreen(ModalScreen[Project | None]):
+class ProjectFormScreen(ModalScreen):
     """Simple form to create a new project."""
-
-    DEFAULT_CSS = """
-    ProjectFormScreen {
-        align: center middle;
-    }
-    #dialog {
-        width: 60;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #dialog Label { margin-bottom: 1; }
-    #dialog Input  { margin-bottom: 1; }
-    #btn-row { height: auto; }
-    """
 
     def compose(self) -> ComposeResult:
         with Container(id="dialog"):
@@ -87,33 +71,24 @@ class ProjectFormScreen(ModalScreen[Project | None]):
 # ---------------------------------------------------------------------------
 
 
-class TaskFormScreen(ModalScreen[Task | None]):
+class TaskForm(ModalScreen):
     """Form to create a new task inside the selected project."""
 
-    DEFAULT_CSS = """
-    TaskFormScreen {
-        align: center middle;
-    }
-    #dialog {
-        width: 60;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #dialog Label { margin-bottom: 1; }
-    #dialog Input  { margin-bottom: 1; }
-    #btn-row { height: auto; }
-    """
-
-    def __init__(self, project_id: int, priorities: list[Priority]) -> None:
+    def __init__(
+        self, project_id: int, priorities: list[Priority], milestones: list[Milestone]
+    ) -> None:
         super().__init__()
         self._project_id = project_id
         self._priorities = priorities
+        self._milestones = milestones
 
     def compose(self) -> ComposeResult:
         pri_hint = "  ".join(
             f"{p.priority_id}={p.priority_name}" for p in self._priorities
+        )
+        ms_hint = (
+            "  ".join(f"{m.milestone_id}={m.milestone_name}" for m in self._milestones)
+            or "None"
         )
         with Container(id="dialog"):
             yield Label("New Task", id="title")
@@ -123,6 +98,8 @@ class TaskFormScreen(ModalScreen[Task | None]):
             yield Input(placeholder="(optional)", id="inp-desc")
             yield Label(f"Priority id  [{pri_hint}]")
             yield Input(placeholder="1", id="inp-pri", value="1")
+            yield Label(f"Milestone id [{ms_hint}]")
+            yield Input(placeholder="(optional)", id="inp-ms")
             with Horizontal(id="btn-row"):
                 yield Button("Add", variant="primary", id="btn-ok")
                 yield Button("Cancel", id="btn-cancel")
@@ -140,14 +117,54 @@ class TaskFormScreen(ModalScreen[Task | None]):
             pri = int(self.query_one("#inp-pri", Input).value.strip() or "1")
         except ValueError:
             pri = 1
+
+        ms_val = self.query_one("#inp-ms", Input).value.strip()
+        ms_id = int(ms_val) if ms_val.isdigit() else None
         t = Task(
             project_id=self._project_id,
             priority_id=pri,
+            milestone_id=ms_id,
             task_name=name,
             task_description=desc,
         )
         t.save()
         self.dismiss(t)
+
+
+# ---------------------------------------------------------------------------
+# Modal: add a milestone to a project
+# ---------------------------------------------------------------------------
+class MilestoneForm(ModalScreen):
+    def __init__(self, project_id: int) -> None:
+        super().__init__()
+        self._project_id = project_id
+
+    def compose(self) -> ComposeResult:
+        with Container(id="dialog"):
+            yield Label("New Milestone", id="title")
+            yield Label("Milestone Name")
+            yield Input(placeholder="e.g. Beta Release", id="inp-name")
+            yield Label("Date (YYYY-MM-DD)")
+            yield Input(placeholder="optional", id="inp-date")
+            with Horizontal(id="btn-row"):
+                yield Button("Create", variant="primary", id="btn-ok")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-cancel":
+            self.dismiss(None)
+            return
+
+        name = self.query_one("#inp-name", Input).value.strip()
+        if not name:
+            self.query_one("#inp-name", Input).focus()
+            return
+
+        date_str = self.query_one("#inp-date", Input).value.strip()
+
+        m = Milestone(project_id=self._project_id, milestone_name=name, date=date_str)
+        m.save()
+        self.dismiss(m)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +179,7 @@ class ProjectView(ListView):
         Binding("n", "new_project", "New Project"),
         Binding("u", "update_project", "Update Project"),
         Binding("d", "delete_project", "Delete Project"),
+        Binding("m", "add_milestone", "Add Milestone"),
         Binding("j", "cursor_down", "↓"),
         Binding("k", "cursor_up", "↑"),
     ]
@@ -170,10 +188,16 @@ class ProjectView(ListView):
         self.app.action_new_project()
 
     def action_delete_project(self) -> None:
-        self.app.action_delete_project()
+        self.app.action_delete_selected()
 
     def action_update_project(self) -> None:
-        self.app.action_update_project()
+        # Doesn't exist yet
+        # self.app.action_update_project()
+        pass
+
+    def action_add_milestone(self) -> None:
+        if self.index is not None:
+            self.app.action_add_milestone()
 
 
 class TaskView(DataTable):
@@ -219,6 +243,7 @@ class TaskView(DataTable):
 class SnekPMApp(App):
     """snekPM – terminal project manager."""
 
+    CSS_PATH = "style.tcss"
     ENABLE_COMMAND_PALETTE = False
 
     TITLE = "🐍 snekPM"
@@ -229,51 +254,6 @@ class SnekPMApp(App):
         Binding("L", "focus_next", "Panel →"),
         Binding("q", "quit", "Quit"),
     ]
-
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-
-    #sidebar {
-        width: 30;
-        border-right: solid $primary;
-        height: 100%;
-    }
-
-    #sidebar-title {
-        background: $primary;
-        color: $background;
-        padding: 0 1;
-        text-align: center;
-    }
-
-    #project-list {
-        height: 1fr;
-    }
-
-    #main {
-        width: 1fr;
-        height: 100%;
-    }
-
-    #tasks-title {
-        background: $accent;
-        color: $background;
-        padding: 0 1;
-    }
-
-    #task-table {
-        height: 1fr;
-    }
-
-    #status-bar {
-        height: 1;
-        background: $panel;
-        padding: 0 1;
-        color: $text-muted;
-    }
-    """
 
     selected_project_id: reactive[int | None] = reactive(None)
 
@@ -328,6 +308,15 @@ class SnekPMApp(App):
         table.clear()
         if self.selected_project_id is None:
             return
+
+        project = Project.get(self.selected_project_id)
+        milestones = Milestone.all_for_project(self.selected_project_id)
+
+        if project:
+            ms_text = ", ".join(m.milestone_name for m in milestones) or "None"
+            self.query_one("#tasks-title", Static).update(
+                f" 📁 {project.project_name}  (id={project.project_id}) | Milestones: {ms_text}"
+            )
         for t in Task.by_project(self.selected_project_id):
             indent = "  " if t.parent_task_id else ""
             done = "✓" if t.is_complete else "○"
@@ -375,25 +364,42 @@ class SnekPMApp(App):
     # ------------------------------------------------------------------
 
     def action_new_project(self) -> None:
-        def _done(result: Project | None) -> None:
-            if result:
-                self._refresh_projects()
-                self._set_status(f"Project '{result.project_name}' created.")
+        self.push_screen(ProjectFormScreen(), callback=self._on_project_created)
 
-            self.push_screen(ProjectFormScreen(), _done)
+    def _on_project_created(self, result: Project | None) -> None:
+        if result:
+            self._refresh_projects()
+            self._set_status(f"Project '{result.project_name}' created.")
 
     def action_new_task(self) -> None:
         if self.selected_project_id is None:
             self._set_status("Select a project first (click in the left panel).")
             return
 
-    def _done(self, result: Task | None) -> None:
+        priorities = Priority.all()
+        milestones = Milestone.all_for_project(self.selected_project_id)
+        self.push_screen(
+            TaskForm(self.selected_project_id, priorities, milestones),
+            callback=self._on_task_created,
+        )
+
+    def _on_task_created(self, result: Task | None) -> None:
         if result:
             self._refresh_tasks()
             self._set_status(f"Task '{result.task_name}' added.")
 
-        priorities = Priority.all()
-        self.push_screen(TaskFormScreen(self.selected_project_id, priorities), _done)
+    def action_add_milestone(self) -> None:
+        if self.selected_project_id is None:
+            self._set_status("Select a project first.")
+            return
+        self.push_screen(
+            MilestoneForm(self.selected_project_id), callback=self._on_milestone_created
+        )
+
+    def _on_milestone_created(self, result: Milestone | None) -> None:
+        if result:
+            self._set_status(f"Milestone '{result.milestone_name}' added.")
+            self._refresh_tasks()
 
     def action_toggle_done(self) -> None:
         table = self.query_one("#task-table", DataTable)
