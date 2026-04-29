@@ -17,6 +17,7 @@ from db import (
     update_record,
 )
 
+
 # ---------------------------------------------------------------------------
 # Project
 # ---------------------------------------------------------------------------
@@ -200,7 +201,8 @@ class Milestone:
 
     @classmethod
     def all_for_project(cls, project_id: int) -> list[Milestone]:
-        return [m for m in cls.all() if m.project_id == project_id]
+        rows = fetch_record(MilestoneQueries.FETCH_MILESTONES_BY_PROJECT, (project_id,))
+        return [cls._from_row(r) for r in rows]
 
     @classmethod
     def _from_row(cls, row: tuple) -> Milestone:
@@ -332,7 +334,10 @@ class Task:
         return [Tag(tag_id=r[0], tag_name=r[1], created_at=r[2]) for r in rows]
 
     def subtasks(self) -> list[Task]:
-        return [t for t in Task.all() if t.parent_task_id == self.task_id]
+        if self.task_id is None:
+            return []
+        rows = fetch_record(TaskQueries.FETCH_SUBTASKS, (self.task_id,)):
+        return [Task._from_row(r) for r in rows]
 
     @classmethod
     def get(cls, task_id: int) -> Optional[Task]:
