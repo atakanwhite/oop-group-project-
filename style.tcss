@@ -1,0 +1,66 @@
+Screen {
+    layout: vertical;
+}
+
+#sidebar {
+    width: 30;
+    border-right: solid $primary;
+    height: 100%;
+}
+
+#sidebar-title {
+    background: $primary;
+    color: $background;
+    padding: 0 1;
+    text-align: center;
+}
+
+#project-list {
+    height: 1fr;
+}
+
+#main {
+    width: 1fr;
+    height: 100%;
+}
+
+#tasks-title {
+    background: $accent;
+    color: $background;
+    padding: 0 1;
+}
+
+#task-table {
+    height: 1fr;
+}
+
+#status-bar {
+    height: 1;
+    background: $panel;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+ProjectFormScreen, TaskForm, MilestoneForm {
+    align: center middle;
+}
+
+#dialog {
+    width: 60;
+    height: auto;
+    border: thick $background 80%;
+    background: $surface;
+    padding: 1 2;
+}
+
+#dialog Label {
+     margin-bottom: 1;
+}
+
+#dialog Input {
+    margin-bottom: 1;
+}
+
+#btn-row {
+     height: auto;
+}

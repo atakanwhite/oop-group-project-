@@ -1,320 +1,301 @@
+from __future__ import annotations
+
 import sqlite3
-from enum import Enum
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from models import Milestone, Priority, Project, Tag, Task
 
 DATABASE_FILE = "snekPM.db"
 
 
-class CreateTables(Enum):
-    CREATE_TABLE_PROJECTS = """
-        CREATE TABLE IF NOT EXISTS projects (
-            project_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            project_name TEXT NOT NULL,
-            project_description TEXT,
-            date_start DATE,
-            date_end DATE,
-            is_complete INTEGER DEFAULT 0
+class Database:
+    def __init__(self, db_file: str = DATABASE_FILE):
+        self.db = sqlite3.connect(db_file)
+        self.cursor = self.db.cursor()
+        self.cursor.execute("PRAGMA foreign_keys = ON;")
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        query = """
+            CREATE TABLE IF NOT EXISTS projects (
+                project_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                project_name TEXT NOT NULL,
+                project_description TEXT,
+                date_start DATE,
+                date_end DATE,
+                is_complete INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS milestones (
+                milestone_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                milestone_name TEXT NOT NULL,
+                date DATE,
+                FOREIGN KEY (project_id) REFERENCES projects (project_id) ON DELETE CASCADE,
+                UNIQUE(project_id, milestone_name)
+            );
+            CREATE TABLE IF NOT EXISTS priorities (
+                priority_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                priority_name TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tags (
+                tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tag_name TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                milestone_id INTEGER,
+                parent_task_id INTEGER,
+                priority_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                task_name TEXT NOT NULL,
+                task_description TEXT,
+                date_start DATE,
+                date_end DATE,
+                is_complete INTEGER DEFAULT 0,
+                FOREIGN KEY (project_id) REFERENCES projects (project_id) ON DELETE CASCADE,
+                FOREIGN KEY (milestone_id) REFERENCES milestones (milestone_id) ON DELETE SET NULL,
+                FOREIGN KEY (parent_task_id) REFERENCES tasks (task_id) ON DELETE CASCADE,
+                FOREIGN KEY (priority_id) REFERENCES priorities (priority_id)
+            );
+            CREATE TABLE IF NOT EXISTS task_tags (
+                task_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (task_id, tag_id),
+                FOREIGN KEY (task_id) REFERENCES tasks (task_id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags (tag_id) ON DELETE CASCADE
+            );
+        """
+        self.db.executescript(query)
+
+    def _run_query(self, query: str, *query_args: Any) -> sqlite3.Cursor:
+        result = self.cursor.execute(query, [*query_args])
+        self.db.commit()
+        return result
+
+    def close(self):
+        self.db.close()
+
+
+class ProjectQueries:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def add_project(self, p: Project) -> None:
+        result = self.db._run_query(
+            "INSERT INTO projects (project_name, project_description, date_start, date_end) VALUES (?, ?, ?, ?)",
+            p.project_name,
+            p.project_description,
+            str(p.date_start) if p.date_start else None,
+            str(p.date_end) if p.date_end else None,
         )
-    """
+        p.project_id = result.lastrowid
 
-    CREATE_TABLE_MILESTONES = """
-        CREATE TABLE IF NOT EXISTS milestones (
-            milestone_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            milestone_name TEXT NOT NULL,
-            date DATE,
-            FOREIGN KEY (project_id) REFERENCES projects (project_id) ON DELETE CASCADE,
-            UNIQUE(project_id, milestone_name)
+    def update_project(self, p: Project) -> None:
+        self.db._run_query(
+            "UPDATE projects SET project_name=?, project_description=?, date_start=?, date_end=?, is_complete=? WHERE project_id=?",
+            p.project_name,
+            p.project_description,
+            str(p.date_start) if p.date_start else None,
+            str(p.date_end) if p.date_end else None,
+            p.is_complete,
+            p.project_id,
         )
-    """
 
-    CREATE_TABLE_PRIORITIES = """
-        CREATE TABLE IF NOT EXISTS priorities (
-            priority_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            priority_name TEXT NOT NULL
+    def delete_project(self, id: int) -> None:
+        self.db._run_query("DELETE FROM projects WHERE project_id = ?", id)
+
+    def get_project(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM projects WHERE project_id = ?", id
+        ).fetchone()
+
+    def get_all_projects(self):
+        return self.db._run_query("SELECT * FROM projects").fetchall()
+
+
+class TaskQueries:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def add_task(self, t: Task) -> None:
+        result = self.db._run_query(
+            """INSERT INTO tasks (project_id, milestone_id, parent_task_id, priority_id,
+               task_name, task_description, date_start, date_end)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            t.project_id,
+            t.milestone_id,
+            t.parent_task_id,
+            t.priority_id,
+            t.task_name,
+            t.task_description,
+            str(t.date_start) if t.date_start else None,
+            str(t.date_end) if t.date_end else None,
         )
-    """
+        t.task_id = result.lastrowid
 
-    CREATE_TABLE_TAGS = """
-        CREATE TABLE IF NOT EXISTS tags (
-            tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            tag_name TEXT NOT NULL UNIQUE
+    def update_task(self, t: Task) -> None:
+        self.db._run_query(
+            """UPDATE tasks SET project_id=?, milestone_id=?, parent_task_id=?, priority_id=?,
+               task_name=?, task_description=?, date_start=?, date_end=?, is_complete=?
+               WHERE task_id=?""",
+            t.project_id,
+            t.milestone_id,
+            t.parent_task_id,
+            t.priority_id,
+            t.task_name,
+            t.task_description,
+            str(t.date_start) if t.date_start else None,
+            str(t.date_end) if t.date_end else None,
+            t.is_complete,
+            t.task_id,
         )
-    """
 
-    CREATE_TABLE_TASKS = """
-        CREATE TABLE IF NOT EXISTS tasks (
-            task_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            milestone_id INTEGER,
-            parent_task_id INTEGER,
-            priority_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            task_name TEXT NOT NULL,
-            task_description TEXT,
-            date_start DATE,
-            date_end DATE,
-            is_complete INTEGER DEFAULT 0,
-            FOREIGN KEY (project_id) REFERENCES projects (project_id) ON DELETE CASCADE,
-            FOREIGN KEY (milestone_id) REFERENCES milestones (milestone_id) ON DELETE SET NULL,
-            FOREIGN KEY (parent_task_id) REFERENCES tasks (task_id) ON DELETE CASCADE,
-            FOREIGN KEY (priority_id) REFERENCES priorities (priority_id)
+    def delete_task(self, id: int) -> None:
+        self.db._run_query("DELETE FROM tasks WHERE task_id = ?", id)
+
+    def get_task(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM tasks WHERE task_id = ?", id
+        ).fetchone()
+
+    def get_all_tasks(self):
+        return self.db._run_query("SELECT * FROM tasks").fetchall()
+
+    def fetch_tasks_by_project(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM tasks WHERE project_id = ?", id
+        ).fetchall()
+
+    def fetch_subtasks(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM tasks WHERE parent_task_id = ?", id
+        ).fetchall()
+
+
+class MilestoneQueries:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def add_milestone(self, m: Milestone) -> None:
+        result = self.db._run_query(
+            "INSERT INTO milestones (project_id, milestone_name, date) VALUES (?, ?, ?)",
+            m.project_id,
+            m.milestone_name,
+            str(m.date) if m.date else None,
         )
-    """
+        m.milestone_id = result.lastrowid
 
-    CREATE_TABLE_TASK_TAGS = """
-        CREATE TABLE IF NOT EXISTS task_tags (
-            task_id INTEGER NOT NULL,
-            tag_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (task_id, tag_id),
-            FOREIGN KEY (task_id) REFERENCES tasks (task_id) ON DELETE CASCADE,
-            FOREIGN KEY (tag_id) REFERENCES tags (tag_id) ON DELETE CASCADE
-        );
-    """
+    def update_milestone(self, m: Milestone) -> None:
+        self.db._run_query(
+            "UPDATE milestones SET project_id=?, milestone_name=?, date=? WHERE milestone_id=?",
+            m.project_id,
+            m.milestone_name,
+            str(m.date) if m.date else None,
+            m.milestone_id,
+        )
 
+    def delete_milestone(self, id: int) -> None:
+        self.db._run_query("DELETE FROM milestones WHERE milestone_id = ?", id)
 
-class ProjectQueries(Enum):
-    INSERT_PROJECT = """
-        INSERT INTO projects (
-            project_name,
-            project_description,
-            date_start,
-            date_end
-        ) VALUES (?, ?, ?, ?)
-    """
-    UPDATE_PROJECT = """
-        UPDATE projects
-        SET project_name = ?,
-            project_description = ?,
-            date_start = ?,
-            date_end = ?,
-            is_complete = ?
-        WHERE project_id = ?
-    """
-    DELETE_PROJECT = """
-        DELETE FROM projects
-        WHERE project_id = ?
-    """
-    FETCH_PROJECT = """
-        SELECT project_id, created_at, project_name, project_description, date_start, date_end, is_complete
-        FROM projects
-        WHERE project_id = ?
-    """
-    FETCH_PROJECT_ALL = """
-        SELECT project_id, created_at, project_name, project_description, date_start, date_end, is_complete
-        FROM projects
-    """
+    def get_milestone(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM milestones WHERE milestone_id = ?", id
+        ).fetchone()
+
+    def get_all_milestones(self):
+        return self.db._run_query("SELECT * FROM milestones").fetchall()
+
+    def fetch_milestones_by_project(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM milestones WHERE project_id = ?", id
+        ).fetchall()
 
 
-class TaskQueries(Enum):
-    INSERT_TASK = """
-        INSERT INTO tasks (
-            project_id,
-            milestone_id,
-            parent_task_id,
-            priority_id,
-            task_name,
-            task_description,
-            date_start,
-            date_end
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    UPDATE_TASK = """
-        UPDATE tasks
-        SET project_id = ?,
-            milestone_id = ?,
-            parent_task_id = ?,
-            priority_id = ?,
-            task_name = ?,
-            task_description = ?,
-            date_start = ?,
-            date_end = ?,
-            is_complete = ?
-        WHERE task_id = ?
-    """
-    DELETE_TASK = """
-        DELETE FROM tasks
-        WHERE task_id = ?
-    """
-    FETCH_TASK = """
-        SELECT task_id, project_id, milestone_id, parent_task_id, priority_id,
-               created_at, task_name, task_description, date_start, date_end, is_complete
-        FROM tasks
-        WHERE task_id = ?
-    """
-    FETCH_TASK_ALL = """
-        SELECT task_id, project_id, milestone_id, parent_task_id, priority_id,
-               created_at, task_name, task_description, date_start, date_end, is_complete
-        FROM tasks
-    """
-    FETCH_TASKS_BY_PROJECT = """
-        SELECT task_id, project_id, milestone_id, parent_task_id, priority_id,
-               created_at, task_name, task_description, date_start, date_end, is_complete
-        FROM tasks
-        WHERE project_id = ?
-    """
+class TagQueries:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def add_tag(self, t: Tag) -> None:
+        result = self.db._run_query(
+            "INSERT INTO tags (tag_name) VALUES (?)", t.tag_name
+        )
+        t.tag_id = result.lastrowid
+
+    def update_tag(self, t: Tag) -> None:
+        self.db._run_query(
+            "UPDATE tags SET tag_name = ? WHERE tag_id = ?", t.tag_name, t.tag_id
+        )
+
+    def delete_tag(self, id: int) -> None:
+        self.db._run_query("DELETE FROM tags WHERE tag_id = ?", id)
+
+    def get_tag(self, id: int):
+        return self.db._run_query("SELECT * FROM tags WHERE tag_id = ?", id).fetchone()
+
+    def get_all_tags(self):
+        return self.db._run_query("SELECT * FROM tags").fetchall()
 
 
-class MilestoneQueries(Enum):
-    INSERT_MILESTONE = """
-        INSERT INTO milestones (
-            project_id,
-            milestone_name,
-            date
-        ) VALUES (?, ?, ?)
-    """
-    UPDATE_MILESTONE = """
-        UPDATE milestones
-        SET project_id = ?,
-            milestone_name = ?,
-            date = ?
-        WHERE milestone_id = ?
-    """
-    DELETE_MILESTONE = """
-        DELETE FROM milestones
-        WHERE milestone_id = ?
-    """
-    FETCH_MILESTONE = """
-        SELECT milestone_id, project_id, created_at, milestone_name, date
-        FROM milestones
-        WHERE milestone_id = ?
-    """
-    FETCH_MILESTONE_ALL = """
-        SELECT milestone_id, project_id, created_at, milestone_name, date
-        FROM milestones
-    """
+class PriorityQueries:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def add_priority(self, p: Priority) -> None:
+        result = self.db._run_query(
+            "INSERT INTO priorities (priority_name) VALUES (?)", p.priority_name
+        )
+        p.priority_id = result.lastrowid
+
+    def update_priority(self, p: Priority) -> None:
+        self.db._run_query(
+            "UPDATE priorities SET priority_name = ? WHERE priority_id = ?",
+            p.priority_name,
+            p.priority_id,
+        )
+
+    def delete_priority(self, id: int) -> None:
+        self.db._run_query("DELETE FROM priorities WHERE priority_id = ?", id)
+
+    def get_priority(self, id: int):
+        return self.db._run_query(
+            "SELECT * FROM priorities WHERE priority_id = ?", id
+        ).fetchone()
+
+    def get_all_priorities(self):
+        return self.db._run_query("SELECT * FROM priorities").fetchall()
 
 
-class TagQueries(Enum):
-    INSERT_TAG = """
-        INSERT INTO tags (tag_name)
-        VALUES (?)
-    """
-    UPDATE_TAG = """
-        UPDATE tags
-        SET tag_name = ?
-        WHERE tag_id = ?
-    """
-    DELETE_TAG = """
-        DELETE FROM tags
-        WHERE tag_id = ?
-    """
-    FETCH_TAG = """
-        SELECT tag_id, created_at, tag_name
-        FROM tags
-        WHERE tag_id = ?
-    """
-    FETCH_TAG_ALL = """
-        SELECT tag_id, created_at, tag_name
-        FROM tags
-    """
+class TaskTagQueries:
+    def __init__(self, db: Database):
+        self.db = db
 
+    def add_task_tag(self, task_id: int, tag_id: int) -> None:
+        self.db._run_query(
+            "INSERT INTO task_tags (task_id, tag_id) VALUES (?, ?)", task_id, tag_id
+        )
 
-class PriorityQueries(Enum):
-    INSERT_PRIORITY = """
-        INSERT INTO priorities (priority_name)
-        VALUES (?)
-    """
-    UPDATE_PRIORITY = """
-        UPDATE priorities
-        SET priority_name = ?
-        WHERE priority_id = ?
-    """
-    DELETE_PRIORITY = """
-        DELETE FROM priorities
-        WHERE priority_id = ?
-    """
-    FETCH_PRIORITY = """
-        SELECT priority_id, created_at, priority_name
-        FROM priorities
-        WHERE priority_id = ?
-    """
-    FETCH_PRIORITY_ALL = """
-        SELECT priority_id, created_at, priority_name
-        FROM priorities
-    """
+    def delete_task_tag(self, task_id: int, tag_id: int) -> None:
+        self.db._run_query(
+            "DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?", task_id, tag_id
+        )
 
+    def get_tags_for_task(self, id: int):
+        query = """
+            SELECT t.tag_id, t.tag_name, tt.created_at FROM tags t
+            JOIN task_tags tt ON t.tag_id = tt.tag_id WHERE tt.task_id = ?
+        """
+        return self.db._run_query(query, id).fetchall()
 
-class TaskTagQueries(Enum):
-    INSERT_TASK_TAG = """
-        INSERT INTO task_tags (task_id, tag_id)
-        VALUES (?, ?)
-    """
-    DELETE_TASK_TAG = """
-        DELETE FROM task_tags
-        WHERE task_id = ? AND tag_id = ?
-    """
-    FETCH_TAGS_FOR_TASK = """
-        SELECT t.tag_id, t.tag_name, tt.created_at
-        FROM tags t
-        JOIN task_tags tt ON t.tag_id = tt.tag_id
-        WHERE tt.task_id = ?
-    """
-    FETCH_TASKS_FOR_TAG = """
-        SELECT t.task_id, t.task_name
-        FROM tasks t
-        JOIN task_tags tt ON t.task_id = tt.task_id
-        WHERE tt.tag_id = ?
-    """
-
-
-def init_db() -> None:
-    try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON;")
-            for c in CreateTables:
-                cursor.execute(c.value)
-        print("Database initialized successfully.")
-    except sqlite3.OperationalError as e:
-        print(f"Failed to initialize Database: {e}")
-
-
-def create_record(query: Enum, data: tuple = ()) -> None:
-    try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            cursor.execute(query.value, data)
-    except sqlite3.Error as e:
-        print(f"Failed to create record: {e}")
-
-
-def delete_record(query: Enum, data: tuple = ()) -> None:
-    try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            cursor.execute(query.value, data)
-    except sqlite3.Error as e:
-        print(f"Failed to delete record: {e}")
-
-
-def update_record(query: Enum, data: tuple = ()) -> None:
-    try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            cursor.execute(query.value, data)
-    except sqlite3.Error as e:
-        print(f"Failed to update record: {e}")
-
-
-def fetch_record(query: Enum, data: tuple = ()) -> list:
-    try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            cursor.execute(query.value, data)
-            return cursor.fetchall()
-    except sqlite3.Error as e:
-        print(f"Failed to fetch record(s): {e}")
-        return []
-
-
-if __name__ == "__main__":
-    init_db()
+    def get_tasks_for_tag(self, id: int):
+        query = """
+            SELECT t.task_id, t.task_name FROM tasks t
+            JOIN task_tags tt ON t.task_id = tt.task_id WHERE tt.tag_id = ?
+        """
+        return self.db._run_query(query, id).fetchall()

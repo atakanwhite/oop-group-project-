@@ -1,6 +1,11 @@
+<<<<<<< HEAD
 # app.py - correct import order
 # toggling projects and tasks done is not working and there is no code for milestones
+=======
+>>>>>>> 0f1e7ba
 from __future__ import annotations
+
+from datetime import date
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -20,42 +25,68 @@ from textual.widgets import (
 )
 
 import db
-from models import Priority, Project, Task
+from models import Milestone, Priority, Project, Task
 
+"""
+UI Controller in charge of user interaction and passing information
+between model and database
+"""
 # ---------------------------------------------------------------------------
-# Helper: seed default priorities if the table is empty
-# ---------------------------------------------------------------------------
-
-
-def _ensure_priorities() -> None:
-    if not Priority.all():
-        for name in ("Low", "Medium", "High", "Critical"):
-            Priority(priority_name=name).save()
-
-
-# ---------------------------------------------------------------------------
-# Modal: create / edit a project
+# Modals (Dependency Injection)
 # ---------------------------------------------------------------------------
 
 
-class ProjectFormScreen(ModalScreen[Project | None]):
-    """Simple form to create a new project."""
+class ProjectDetailScreen(ModalScreen):
+    """High level class responsible for
+    A floating window showing detailed project information."""
 
-    DEFAULT_CSS = """
-    ProjectFormScreen {
-        align: center middle;
-    }
-    #dialog {
-        width: 60;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #dialog Label { margin-bottom: 1; }
-    #dialog Input  { margin-bottom: 1; }
-    #btn-row { height: auto; }
-    """
+    def __init__(self, project_row: tuple, milestones: list[tuple]) -> None:
+        super().__init__()
+        self.p = project_row
+        self.ms = milestones
+
+    def compose(self) -> ComposeResult:
+        """
+        Responsible for composing the window,
+        and mapping row indices.
+        """
+
+        with Container(id="dialog"):
+            yield Label(f"PROJECT DETAILS: {self.p[2]}", id="title")
+
+            with Vertical(id="detail-content"):
+                yield Label(f"[b]Description:[/b]\n{self.p[3] or 'No description'}")
+                yield Label(
+                    f"[b]Timeline:[/b] {self.p[4] or 'N/A'}  to  {self.p[5] or 'N/A'}"
+                )
+
+                yield Label("\n[b]Milestones:[/b]")
+                if not self.ms:
+                    yield Label("  - None")
+                for m in self.ms:
+                    # m[3] is milestone name, m[4] is date
+                    yield Label(f"  • {m[3]} ({m[4] or 'No date'})")
+
+                yield Label(
+                    f"\n[b]Status:[/b] {'Completed ✓' if self.p[6] else 'In Progress ○'}"
+                )
+
+            with Horizontal(id="btn-row"):
+                yield Button("Close", id="btn-close", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Button event listener for closing the info window"""
+
+        if event.button.id == "btn-close":
+            self.dismiss()
+
+
+class ProjectFormScreen(ModalScreen):
+    """Form to create a new project. Receives project repository(queries)."""
+
+    def __init__(self, project_repo: db.ProjectQueries) -> None:
+        super().__init__()
+        self.repo = project_repo
 
     def compose(self) -> ComposeResult:
         with Container(id="dialog"):
@@ -64,6 +95,145 @@ class ProjectFormScreen(ModalScreen[Project | None]):
             yield Input(placeholder="Project name", id="inp-name")
             yield Label("Description")
             yield Input(placeholder="(optional)", id="inp-desc")
+            yield Label("Start Date")
+            yield Input(placeholder="2026-04-30 (optional)", id="inp-sdate")
+            yield Label("End Date")
+            yield Input(placeholder="2026-05-30 (optional)", id="inp-edate")
+            with Horizontal(id="btn-row"):
+                yield Button("Create", variant="primary", id="btn-ok")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """
+        # Button event listener:
+            - Early exits if cancel.
+            - Queries name, start date, end date.
+            - Maps input values to querie and passes for db
+
+        # Error handling for dates:
+            - start date can't be earlier than today
+            - end date can't be earlier than start date.
+            - Notifys user with popup if error
+        """
+
+        if event.button.id == "btn-cancel":
+            self.dismiss(None)
+            return
+        name = self.query_one("#inp-name", Input).value.strip()
+        if not name:
+            self.query_one("#inp-name", Input).focus()
+            return
+
+        s_val = self.query_one("#inp-sdate", Input).value.strip()
+        e_val = self.query_one("#inp-edate", Input).value.strip()
+        today = date.today()
+
+        try:
+            s_date = date.fromisoformat(s_val) if s_val else None
+            e_date = date.fromisoformat(e_val) if e_val else None
+
+            if s_date and s_date < today:
+                self.notify(
+                    f"Start date cannot be in the past! (Today is {today})",
+                    severity="error",
+                )
+                return
+
+            if s_date and e_date and e_date < s_date:
+                self.notify("End date must be after the start date!", severity="error")
+
+        except ValueError:
+            self.notify("Invalid date format! Use YYYY-MM-DD", severity="error")
+            return
+
+        p = Project(
+            project_name=name,
+            project_description=self.query_one("#inp-desc", Input).value,
+            date_start=s_date,
+            date_end=e_date,
+        )
+        self.repo.add_project(p)
+        self.dismiss(p)
+
+
+class TaskForm(ModalScreen):
+    """Form to create a new task. Receives repository and context data."""
+
+    def __init__(
+        self,
+        project_id: int,
+        task_repo: db.TaskQueries,
+        priorities: list[Priority],
+        milestones: list[Milestone],
+    ) -> None:
+
+        super().__init__()
+        self._project_id = project_id
+        self.repo = task_repo
+        self._priorities = priorities
+        self._milestones = milestones
+
+    def compose(self) -> ComposeResult:
+        pri_hint = "  ".join(
+            f"{p.priority_id}={p.priority_name}" for p in self._priorities
+        )
+        ms_hint = (
+            "  ".join(f"{m.milestone_id}={m.milestone_name}" for m in self._milestones)
+            or "None"
+        )
+        with Container(id="dialog"):
+            yield Label("New Task", id="title")
+            yield Label("Task name")
+            yield Input(placeholder="Task name", id="inp-name")
+            yield Label("Description")
+            yield Input(placeholder="(optional)", id="inp-desc")
+            yield Label(f"Priority id [{pri_hint}]")
+            yield Input(placeholder="1", id="inp-pri", value="1")
+            yield Label(f"Milestone id [{ms_hint}]")
+            yield Input(placeholder="(optional)", id="inp-ms")
+            with Horizontal(id="btn-row"):
+                yield Button("Add", variant="primary", id="btn-ok")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-cancel":
+            self.dismiss(None)
+            return
+
+        name = self.query_one("#inp-name", Input).value.strip()
+        if not name:
+            return
+
+        try:
+            pri = int(self.query_one("#inp-pri", Input).value.strip() or "1")
+        except ValueError:
+            pri = 1
+
+        ms_val = self.query_one("#inp-ms", Input).value.strip()
+        ms_id = int(ms_val) if ms_val.isdigit() else None
+
+        t = Task(
+            project_id=self._project_id,
+            priority_id=pri,
+            milestone_id=ms_id,
+            task_name=name,
+            task_description=self.query_one("#inp-desc", Input).value,
+        )
+        self.repo.add_task(t)
+        self.dismiss(t)
+
+
+class MilestoneForm(ModalScreen):
+    def __init__(self, project_id: int, milestone_repo: db.MilestoneQueries) -> None:
+        super().__init__()
+        self._project_id = project_id
+        self.repo = milestone_repo
+
+    def compose(self) -> ComposeResult:
+        with Container(id="dialog"):
+            yield Label("New Milestone", id="title")
+            yield Label("Milestone Name")
+            yield Input(placeholder="e.g. Beta Release", id="inp-name")
             with Horizontal(id="btn-row"):
                 yield Button("Create", variant="primary", id="btn-ok")
                 yield Button("Cancel", id="btn-cancel")
@@ -74,83 +244,32 @@ class ProjectFormScreen(ModalScreen[Project | None]):
             return
         name = self.query_one("#inp-name", Input).value.strip()
         if not name:
-            self.query_one("#inp-name", Input).focus()
             return
-        desc = self.query_one("#inp-desc", Input).value.strip()
-        p = Project(project_name=name, project_description=desc)
-        p.save()
-        self.dismiss(p)
+
+        m = Milestone(project_id=self._project_id, milestone_name=name)
+        self.repo.add_milestone(m)
+        self.dismiss(m)
 
 
 # ---------------------------------------------------------------------------
-# Modal: add a task to a project
+# Views
 # ---------------------------------------------------------------------------
 
 
-class TaskFormScreen(ModalScreen[Task | None]):
-    """Form to create a new task inside the selected project."""
+class ProjectView(ListView):
+    """Navigation keys handled here, action keys bubble to App."""
 
-    DEFAULT_CSS = """
-    TaskFormScreen {
-        align: center middle;
-    }
-    #dialog {
-        width: 60;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #dialog Label { margin-bottom: 1; }
-    #dialog Input  { margin-bottom: 1; }
-    #btn-row { height: auto; }
-    """
+    pass
 
-    def __init__(self, project_id: int, priorities: list[Priority]) -> None:
-        super().__init__()
-        self._project_id = project_id
-        self._priorities = priorities
 
-    def compose(self) -> ComposeResult:
-        pri_hint = "  ".join(
-            f"{p.priority_id}={p.priority_name}" for p in self._priorities
-        )
-        with Container(id="dialog"):
-            yield Label("New Task", id="title")
-            yield Label("Task name")
-            yield Input(placeholder="Task name", id="inp-name")
-            yield Label("Description")
-            yield Input(placeholder="(optional)", id="inp-desc")
-            yield Label(f"Priority id  [{pri_hint}]")
-            yield Input(placeholder="1", id="inp-pri", value="1")
-            with Horizontal(id="btn-row"):
-                yield Button("Add", variant="primary", id="btn-ok")
-                yield Button("Cancel", id="btn-cancel")
+class TaskView(DataTable):
+    """Navigation keys handled here, action keys bubble to App."""
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-cancel":
-            self.dismiss(None)
-            return
-        name = self.query_one("#inp-name", Input).value.strip()
-        if not name:
-            self.query_one("#inp-name", Input).focus()
-            return
-        desc = self.query_one("#inp-desc", Input).value.strip()
-        try:
-            pri = int(self.query_one("#inp-pri", Input).value.strip() or "1")
-        except ValueError:
-            pri = 1
-        t = Task(
-            project_id=self._project_id,
-            priority_id=pri,
-            task_name=name,
-            task_description=desc,
-        )
-        t.save()
-        self.dismiss(t)
+    pass
 
 
 # ---------------------------------------------------------------------------
+<<<<<<< HEAD
 # Views
 # ---------------------------------------------------------------------------
 
@@ -213,73 +332,36 @@ class TaskView(DataTable):
 
 # ---------------------------------------------------------------------------
 # Main application
+=======
+# Main Controller
+>>>>>>> 0f1e7ba
 # ---------------------------------------------------------------------------
 
 
 class SnekPMApp(App):
-    """snekPM – terminal project manager."""
+    """Wrapper for the applica"""
 
+<<<<<<< HEAD
     ENABLE_COMMAND_PALETTE = False
 
+=======
+    CSS_PATH = "style.tcss"
+>>>>>>> 0f1e7ba
     TITLE = "🐍 snekPM"
-    SUB_TITLE = "Project Manager"
 
     BINDINGS = [
         Binding("H", "focus_previous", "← Panel"),
         Binding("L", "focus_next", "Panel →"),
         Binding("q", "quit", "Quit"),
+        Binding("i", "show_project_info", "Project Info"),
+        Binding("n", "new_project", "New Project"),
+        Binding("t", "new_task", "New Task"),
+        Binding("m", "add_milestone", "Add Milestone"),
+        Binding("x", "toggle_done", "Toggle Done"),
+        Binding("d", "delete_selected", "Delete"),
     ]
 
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-
-    #sidebar {
-        width: 30;
-        border-right: solid $primary;
-        height: 100%;
-    }
-
-    #sidebar-title {
-        background: $primary;
-        color: $background;
-        padding: 0 1;
-        text-align: center;
-    }
-
-    #project-list {
-        height: 1fr;
-    }
-
-    #main {
-        width: 1fr;
-        height: 100%;
-    }
-
-    #tasks-title {
-        background: $accent;
-        color: $background;
-        padding: 0 1;
-    }
-
-    #task-table {
-        height: 1fr;
-    }
-
-    #status-bar {
-        height: 1;
-        background: $panel;
-        padding: 0 1;
-        color: $text-muted;
-    }
-    """
-
     selected_project_id: reactive[int | None] = reactive(None)
-
-    # ------------------------------------------------------------------
-    # Compose
-    # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -293,62 +375,63 @@ class SnekPMApp(App):
         yield Static("", id="status-bar")
         yield Footer()
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def on_mount(self) -> None:
         self._project_ids = []
-        db.init_db()
-        _ensure_priorities()
+        self.db_engine = db.Database()
+
+        self.project_queries = db.ProjectQueries(self.db_engine)
+        self.task_queries = db.TaskQueries(self.db_engine)
+        self.milestone_queries = db.MilestoneQueries(self.db_engine)
+        self.priority_queries = db.PriorityQueries(self.db_engine)
+
         self._setup_task_table()
+        self._ensure_priorities()
         self._refresh_projects()
+        self.query_one("#project-list").focus()
+
+    def on_unmount(self) -> None:
+        self.db_engine.close()
+
+    def _ensure_priorities(self) -> None:
+        if not self.priority_queries.get_all_priorities():
+            for name in ("Low", "Medium", "High", "Critical"):
+                self.priority_queries.add_priority(Priority(priority_name=name))
 
     def _setup_task_table(self) -> None:
         table = self.query_one("#task-table", DataTable)
-        table.add_columns("ID", "Task", "Priority", "Milestone", "Done", "Ends")
-
-    # ------------------------------------------------------------------
-    # Data helpers
-    # ------------------------------------------------------------------
+        table.add_columns("ID", "Task", "Priority", "Done")
 
     def _refresh_projects(self) -> None:
         lv = self.query_one("#project-list", ListView)
         lv.clear()
-
         self._project_ids = []
-
-        for p in Project.all():
-            tick = "✓" if p.is_complete else "○"
-            lv.append(ListItem(Label(f" {tick} {p.project_name}")))
-            self._project_ids.append(p.project_id)
+        for row in self.project_queries.get_all_projects():
+            tick = "✓" if row[6] else "○"
+            lv.append(ListItem(Label(f" {tick} {row[2]}")))
+            self._project_ids.append(row[0])
 
     def _refresh_tasks(self) -> None:
         table = self.query_one("#task-table", DataTable)
         table.clear()
-        if self.selected_project_id is None:
+        if not self.selected_project_id:
             return
-        for t in Task.by_project(self.selected_project_id):
-            indent = "  " if t.parent_task_id else ""
-            done = "✓" if t.is_complete else "○"
-            table.add_row(
-                str(t.task_id),
-                f"{indent}{t.task_name}",
-                str(t.priority_id),
-                str(t.milestone_id or "—"),
-                done,
-                str(t.date_end or "—"),
-                key=str(t.task_id),
+
+        p_row = self.project_queries.get_project(self.selected_project_id)
+        if p_row:
+            ms_rows = self.milestone_queries.fetch_milestones_by_project(
+                self.selected_project_id
+            )
+            ms_text = ", ".join(m[3] for m in ms_rows) or "None"
+            self.query_one("#tasks-title", Static).update(
+                f" 📁 {p_row[2]} | Milestones: {ms_text}"
             )
 
-    def _set_status(self, msg: str) -> None:
-        self.query_one("#status-bar", Static).update(msg)
-
-    # ------------------------------------------------------------------
-    # Event handlers
-    # ------------------------------------------------------------------
+        for row in self.task_queries.fetch_tasks_by_project(self.selected_project_id):
+            done = "✓" if row[10] else "○"
+            table.add_row(str(row[0]), row[6], str(row[4]), done, key=str(row[0]))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+<<<<<<< HEAD
         index = event.list_view.index
 
         if index is None or index < 0:
@@ -381,12 +464,34 @@ class SnekPMApp(App):
                 self._set_status(f"Project '{result.project_name}' created.")
 
             self.push_screen(ProjectFormScreen(), _done)
+=======
+        idx = event.list_view.index
+        if idx is not None and 0 <= idx < len(self._project_ids):
+            self.selected_project_id = self._project_ids[idx]
+            self._refresh_tasks()
+            self.query_one("#task-table").focus()
+
+    def action_new_project(self) -> None:
+        self.push_screen(
+            ProjectFormScreen(self.project_queries),
+            callback=lambda _: self._refresh_projects(),
+        )
+>>>>>>> 0f1e7ba
 
     def action_new_task(self) -> None:
-        if self.selected_project_id is None:
-            self._set_status("Select a project first (click in the left panel).")
-            return
+        if self.selected_project_id:
+            pris = [
+                Priority(priority_id=r[0], priority_name=r[2])
+                for r in self.priority_queries.get_all_priorities()
+            ]
+            ms = [
+                Milestone(milestone_id=r[0], project_id=r[1], milestone_name=r[3])
+                for r in self.milestone_queries.fetch_milestones_by_project(
+                    self.selected_project_id
+                )
+            ]
 
+<<<<<<< HEAD
     def _done(self, result: Task | None) -> None:
         if result:
             self._refresh_tasks()
@@ -421,40 +526,60 @@ class SnekPMApp(App):
             f"Task #{task_id} marked {'done' if task.is_complete else 'open'}."
         )
 
+=======
+            self.push_screen(
+                TaskForm(self.selected_project_id, self.task_queries, pris, ms),
+                callback=lambda _: self._refresh_tasks(),
+            )
+
+    def action_add_milestone(self) -> None:
+        if self.selected_project_id:
+            self.push_screen(
+                MilestoneForm(self.selected_project_id, self.milestone_queries),
+                callback=lambda _: self._refresh_tasks(),
+            )
+
+    def action_toggle_done(self) -> None:
+        table = self.query_one("#task-table", DataTable)
+        if table.cursor_row >= 0:
+            task_id = int(table.get_row_at(table.cursor_row)[0])
+            raw = self.task_queries.get_task(task_id)
+            if raw:
+                t = Task(
+                    task_id=raw[0],
+                    project_id=raw[1],
+                    priority_id=raw[4],
+                    task_name=raw[6],
+                    is_complete=raw[10],
+                )
+                t.is_complete = 0 if t.is_complete else 1
+                self.task_queries.update_task(t)
+                self._refresh_tasks()
+
+>>>>>>> 0f1e7ba
     def action_delete_selected(self) -> None:
-        # Try task table first
         table = self.query_one("#task-table", DataTable)
         if table.has_focus and table.cursor_row >= 0:
-            row = table.get_row_at(table.cursor_row)
-            task_id = int(row[0])
-            task = Task.get(task_id)
-            if task:
-                task.delete()
-                self._refresh_tasks()
-                self._set_status(f"Task #{task_id} deleted.")
-            return
+            task_id = int(table.get_row_at(table.cursor_row)[0])
+            self.task_queries.delete_task(task_id)
+            self._refresh_tasks()
+        elif self.selected_project_id:
+            self.project_queries.delete_project(self.selected_project_id)
+            self.selected_project_id = None
+            self._refresh_projects()
+            self.query_one("#task-table", DataTable).clear()
 
-        # Otherwise try deleting the selected project
-        if self.selected_project_id is not None:
-            p = Project.get(self.selected_project_id)
-            if p:
-                p.delete()
-                self.selected_project_id = None
-                self.query_one("#tasks-title", Static).update(" Select a project …")
-                self.query_one("#task-table", DataTable).clear()
-                self._refresh_projects()
-                self._set_status("Project deleted.")
+    def action_show_project_info(self) -> None:
+        """Fetches data and shows the floating project info window."""
+        if self.selected_project_id:
+            project_row = self.project_queries.get_project(self.selected_project_id)
+            ms_rows = self.milestone_queries.fetch_milestones_by_project(
+                self.selected_project_id
+            )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
-def main() -> None:
-    app = SnekPMApp()
-    app.run()
+            if project_row:
+                self.push_screen(ProjectDetailScreen(project_row, ms_rows))
 
 
 if __name__ == "__main__":
-    main()
+    SnekPMApp().run()
