@@ -3,9 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+"""Data layer model"""
+
 
 @dataclass(kw_only=True)
 class BaseModel:
+    """
+    Base model for all other data layer objects,
+    easily extendable when more classes come into play and share information
+    """
+
     created_at: str | None = None
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
@@ -20,13 +22,62 @@ from textual.widgets import (
 import db
 from models import Milestone, Priority, Project, Task
 
+"""
+UI Controller in charge of user interaction and passing information
+between model and database
+"""
 # ---------------------------------------------------------------------------
 # Modals (Dependency Injection)
 # ---------------------------------------------------------------------------
 
 
+class ProjectDetailScreen(ModalScreen):
+    """High level class responsible for
+    A floating window showing detailed project information."""
+
+    def __init__(self, project_row: tuple, milestones: list[tuple]) -> None:
+        super().__init__()
+        self.p = project_row
+        self.ms = milestones
+
+    def compose(self) -> ComposeResult:
+        """
+        Responsible for composing the window,
+        and mapping row indices.
+        """
+
+        with Container(id="dialog"):
+            yield Label(f"PROJECT DETAILS: {self.p[2]}", id="title")
+
+            with Vertical(id="detail-content"):
+                yield Label(f"[b]Description:[/b]\n{self.p[3] or 'No description'}")
+                yield Label(
+                    f"[b]Timeline:[/b] {self.p[4] or 'N/A'}  to  {self.p[5] or 'N/A'}"
+                )
+
+                yield Label("\n[b]Milestones:[/b]")
+                if not self.ms:
+                    yield Label("  - None")
+                for m in self.ms:
+                    # m[3] is milestone name, m[4] is date
+                    yield Label(f"  • {m[3]} ({m[4] or 'No date'})")
+
+                yield Label(
+                    f"\n[b]Status:[/b] {'Completed ✓' if self.p[6] else 'In Progress ○'}"
+                )
+
+            with Horizontal(id="btn-row"):
+                yield Button("Close", id="btn-close", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Button event listener for closing the info window"""
+
+        if event.button.id == "btn-close":
+            self.dismiss()
+
+
 class ProjectFormScreen(ModalScreen):
-    """Form to create a new project. Receives project repository."""
+    """Form to create a new project. Receives project repository(queries)."""
 
     def __init__(self, project_repo: db.ProjectQueries) -> None:
         super().__init__()
@@ -39,11 +90,27 @@ class ProjectFormScreen(ModalScreen):
             yield Input(placeholder="Project name", id="inp-name")
             yield Label("Description")
             yield Input(placeholder="(optional)", id="inp-desc")
+            yield Label("Start Date")
+            yield Input(placeholder="2026-04-30 (optional)", id="inp-sdate")
+            yield Label("End Date")
+            yield Input(placeholder="2026-05-30 (optional)", id="inp-edate")
             with Horizontal(id="btn-row"):
                 yield Button("Create", variant="primary", id="btn-ok")
                 yield Button("Cancel", id="btn-cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """
+        # Button event listener:
+            - Early exits if cancel.
+            - Queries name, start date, end date.
+            - Maps input values to querie and passes for db
+
+        # Error handling for dates:
+            - start date can't be earlier than today
+            - end date can't be earlier than start date.
+            - Notifys user with popup if error
+        """
+
         if event.button.id == "btn-cancel":
             self.dismiss(None)
             return
@@ -52,9 +119,33 @@ class ProjectFormScreen(ModalScreen):
             self.query_one("#inp-name", Input).focus()
             return
 
+        s_val = self.query_one("#inp-sdate", Input).value.strip()
+        e_val = self.query_one("#inp-edate", Input).value.strip()
+        today = date.today()
+
+        try:
+            s_date = date.fromisoformat(s_val) if s_val else None
+            e_date = date.fromisoformat(e_val) if e_val else None
+
+            if s_date and s_date < today:
+                self.notify(
+                    f"Start date cannot be in the past! (Today is {today})",
+                    severity="error",
+                )
+                return
+
+            if s_date and e_date and e_date < s_date:
+                self.notify("End date must be after the start date!", severity="error")
+
+        except ValueError:
+            self.notify("Invalid date format! Use YYYY-MM-DD", severity="error")
+            return
+
         p = Project(
             project_name=name,
             project_description=self.query_one("#inp-desc", Input).value,
+            date_start=s_date,
+            date_end=e_date,
         )
         self.repo.add_project(p)
         self.dismiss(p)
@@ -70,6 +161,7 @@ class TaskForm(ModalScreen):
         priorities: list[Priority],
         milestones: list[Milestone],
     ) -> None:
+
         super().__init__()
         self._project_id = project_id
         self.repo = task_repo
@@ -177,6 +269,8 @@ class TaskView(DataTable):
 
 
 class SnekPMApp(App):
+    """Wrapper for the applica"""
+
     CSS_PATH = "style.tcss"
     TITLE = "🐍 snekPM"
 
@@ -184,7 +278,7 @@ class SnekPMApp(App):
         Binding("H", "focus_previous", "← Panel"),
         Binding("L", "focus_next", "Panel →"),
         Binding("q", "quit", "Quit"),
-        # Global Action Bindings (Fixes the non-working keys)
+        Binding("i", "show_project_info", "Project Info"),
         Binding("n", "new_project", "New Project"),
         Binding("t", "new_task", "New Task"),
         Binding("m", "add_milestone", "Add Milestone"),
@@ -208,16 +302,13 @@ class SnekPMApp(App):
 
     def on_mount(self) -> None:
         self._project_ids = []
-        # 1. Initialize Engine
         self.db_engine = db.Database()
 
-        # 2. Initialize Specialists
         self.project_queries = db.ProjectQueries(self.db_engine)
         self.task_queries = db.TaskQueries(self.db_engine)
         self.milestone_queries = db.MilestoneQueries(self.db_engine)
         self.priority_queries = db.PriorityQueries(self.db_engine)
 
-        # 3. Setup UI
         self._setup_task_table()
         self._ensure_priorities()
         self._refresh_projects()
@@ -250,7 +341,6 @@ class SnekPMApp(App):
         if not self.selected_project_id:
             return
 
-        # Update Title Panel
         p_row = self.project_queries.get_project(self.selected_project_id)
         if p_row:
             ms_rows = self.milestone_queries.fetch_milestones_by_project(
@@ -261,13 +351,11 @@ class SnekPMApp(App):
                 f" 📁 {p_row[2]} | Milestones: {ms_text}"
             )
 
-        # Populate Table
         for row in self.task_queries.fetch_tasks_by_project(self.selected_project_id):
             done = "✓" if row[10] else "○"
             table.add_row(str(row[0]), row[6], str(row[4]), done, key=str(row[0]))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        # Safe indexing fix
         idx = event.list_view.index
         if idx is not None and 0 <= idx < len(self._project_ids):
             self.selected_project_id = self._project_ids[idx]
@@ -282,7 +370,6 @@ class SnekPMApp(App):
 
     def action_new_task(self) -> None:
         if self.selected_project_id:
-            # Map raw tuples back to objects for the TaskForm hint helpers
             pris = [
                 Priority(priority_id=r[0], priority_name=r[2])
                 for r in self.priority_queries.get_all_priorities()
@@ -312,7 +399,6 @@ class SnekPMApp(App):
             task_id = int(table.get_row_at(table.cursor_row)[0])
             raw = self.task_queries.get_task(task_id)
             if raw:
-                # Map raw tuple to model to perform logic
                 t = Task(
                     task_id=raw[0],
                     project_id=raw[1],
@@ -335,6 +421,17 @@ class SnekPMApp(App):
             self.selected_project_id = None
             self._refresh_projects()
             self.query_one("#task-table", DataTable).clear()
+
+    def action_show_project_info(self) -> None:
+        """Fetches data and shows the floating project info window."""
+        if self.selected_project_id:
+            project_row = self.project_queries.get_project(self.selected_project_id)
+            ms_rows = self.milestone_queries.fetch_milestones_by_project(
+                self.selected_project_id
+            )
+
+            if project_row:
+                self.push_screen(ProjectDetailScreen(project_row, ms_rows))
 
 
 if __name__ == "__main__":
